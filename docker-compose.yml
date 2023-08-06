@@ -1,117 +1,102 @@
-version: '3.8'
+version: "3.7"
+volumes:
+  kong_data: {}
+  
+networks:
+ kong-net:
 services:
+#######################################
+  # Postgres: The database used by Kong
+#######################################
   kong-database:
-    image: postgres:12-alpine
-    container_name: kong-database
-    environment:
-      - POSTGRES_USER=kong
-      - POSTGRES_DB=kong
-      - POSTGRES_PASSWORD=kong
+    image: postgres:9.6
+    container_name: kong-postgres
+    restart: on-failure
+    networks:
+      - kong-net
     volumes:
-      - ./pg_data:/var/lib/postgresql/data
-    restart: always
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-  migrations:
-    depends_on:
-      - kong-database
-    image: kong
-    container_name: kong-migrations
+      - kong_data:/var/lib/postgresql/data
     environment:
-      - KONG_DATABASE=postgres
-      - KONG_PG_HOST=kong-database
-      - KONG_PG_DATABASE=kong
-      - KONG_PG_USER=kong
-      - KONG_PG_PASSWORD=kong
-    command: kong migrations bootstrap -v
-
-  kong:
-    depends_on:
-      - kong-database
-    image: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: ${KONG_PG_PASSWORD:-kong}
+      POSTGRES_DB: kong
     ports:
-      - 80:8000
-      - 443:8443 
-      - 8001:8001
-    container_name: kong
-    restart: always
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+#######################################
+  # Kong database migration
+#######################################
+  kong-migration:
+    image: ${KONG_DOCKER_TAG:-kong:latest}
+    command: kong migrations bootstrap
+    networks:
+      - kong-net
+    restart: on-failure
     environment:
-      - KONG_DATABASE=postgres
-      - KONG_PG_HOST=kong-database
-      - KONG_PG_DATABASE=kong
-      - KONG_PG_USER=kong
-      - KONG_PG_PASSWORD=kong
-      - KONG_ADMIN_LISTEN=0.0.0.0:8001
-      - KONG_PROXY_LISTEN=0.0.0.0:8000, 0.0.0.0:8443 ssl http2
-      - KONG_NGINX_HTTP_RESOLVER=8.8.8.8
-      - KONG_PROXY_ERROR_LOG=/dev/stderr
-      - KONG_ADMIN_ERROR_LOG=/dev/stderr
-      - KONG_TRUSTED_IPS=0.0.0.0/0,::/0
-      - KONG_REAL_IP_RECURSIVE=on
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD:-kong}
+    depends_on:
+      - kong-database
+#######################################
+  # Kong: The API Gateway
+#######################################
+  kong:
+    image: ${KONG_DOCKER_TAG:-kong:latest}
+    restart: on-failure
+    networks:
+      - kong-net
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD:-kong}
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_PROXY_LISTEN_SSL: 0.0.0.0:8443
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+    depends_on:
+      - kong-database
     healthcheck:
-      test: ["CMD", "wget", "-O-", "http://127.0.0.1:8001/status"]
-      interval: 30s
-      timeout: 20s
-      retries: 5
-
-  mongo:
-    image: mongo:4.2.2-bionic
-    ports: 
-      - 27017:27017
-    healthcheck:
-      test: echo 'db.stats().ok' | mongo localhost:27017/konga --quiet
-      interval: 30s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - konga_data:/data/db
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8443:8443"
+      - "8444:8444"
+#######################################
+  # Konga database prepare
+#######################################
+  konga-prepare:
+    image: pantsel/konga:latest
+    command: "-c prepare -a postgres -u postgresql://kong:${KONG_PG_PASSWORD:-kong}@kong-database:5432/konga"
+    networks:
+      - kong-net
+    restart: on-failure
+    depends_on:
+      - kong-database
+#######################################
+  # Konga: Kong GUI
+#######################################
   konga:
     image: pantsel/konga:latest
-    ports:
-      - 1337:1337
+    restart: always
+    networks:
+        - kong-net   
     environment:
-      DB_ADAPTER: mongo
-      DB_DATABASE: konga
-      DB_HOST: mongo
-      KONGA_SEED_USER_DATA_SOURCE_FILE: /kus.js
+      DB_ADAPTER: postgres
+      DB_URI: postgresql://kong:${KONG_PG_PASSWORD:-kong}@kong-database:5432/konga
       NODE_ENV: production
-    volumes:
-      - ./kus.js:/kus.js:ro
-    restart: on-failure
-
-  prometheus:
-    image: prom/prometheus
-    ports:
-      - 127.0.0.1:9090:9090
-    container_name: prometheus
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-    restart: always
-
-  node_exporter:
-    image: prom/node-exporter:latest
-    ports:
-      - 9100:9100
-    container_name: node_exporter
-    restart: always
     depends_on:
-      - prometheus
-
-  grafana:
-    image: grafana/grafana
+      - kong-database
     ports:
-      - 3000:3000
-    container_name: grafana
-    restart: always
-    links: 
-      - prometheus:prometheus
-    environment:
-      GF_INSTALL_PLUGINS: grafana-clock-panel, grafana-simple-json-datasource
-    depends_on:
-      - prometheus
+      - "1337:1337"
