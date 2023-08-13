@@ -7,6 +7,6 @@ module.exports = [
         "node_id": "http://kong:8001",
         "admin": true,
         "active": true,
-        "password": "admin1234"
+        "password": "TUPASS"
     }
 ];
