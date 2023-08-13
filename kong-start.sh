@@ -1,5 +1,11 @@
 #!/bin/bash
 
+echo "Starting Graylog..."
+
+docker-compose up -d graylog elasticsearch mongo
+
+echo "Graylog running http://127.0.0.1:9000/"
+
 echo "Starting kong-database..."
 
 docker-compose up -d kong-database
@@ -28,3 +34,19 @@ echo "Kong proxy running http://0.0.0.0/"
 echo "Starting konga..."
 docker-compose up -d konga
 echo "Konga running http://0.0.0.0:1337/"
+
+docker-compose up -d grafana
+
+echo "Grafana running http://0.0.0.0:3000/"
+
+echo "Starting prometheus..."
+
+docker-compose up -d prometheus node_exporter
+
+echo "Prometheus running http://0.0.0.0:9090/"
+
+echo "Starting API & DB..."
+
+docker-compose up -d db api 
+
+echo "API on http://0.0.0.0:5000/"
