@@ -62,6 +62,64 @@ services:
     volumes:
       - ./konga_data:/app/kongadata
 
+  grafana:
+    container_name: grafana
+    image: grafana/grafana
+    ports:
+      - 3000:3000
+    container_name: grafana
+    restart: always
+    links: 
+      - prometheus:prometheus
+    environment:
+      GF_INSTALL_PLUGINS: grafana-clock-panel, grafana-simple-json-datasource
+    depends_on:
+      - prometheus
+
+  elasticsearch:
+    container_name: elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch-oss:7.10.2
+    environment:
+      - http.host=0.0.0.0
+      - transport.host=localhost
+      - network.host=0.0.0.0
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  graylog:
+    container_name: graylog
+    image: graylog/graylog:4.0
+    environment:
+      - TZ=America/Argentina/Buenos_Aires
+      - GRAYLOG_PASSWORD_SECRET=somepasswordpepper
+      - GRAYLOG_TIMEZONE=America/Argentina/Buenos_Aires
+      - GRAYLOG_ROOT_PASSWORD_SHA2=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+      - GRAYLOG_HTTP_EXTERNAL_URI=http://127.0.0.1:9000/
+      - GRAYLOG_MONGODB_URI=mongodb://mongo/graylog
+      - GRAYLOG_MONGODB_MAX_CONNECTIONS=100
+      - GRAYLOG_MONGODB_THREADS_ALLOWED_TO_BLOCK_MULTIPLIER=5
+    entrypoint: /usr/bin/tini -- wait-for-it elasticsearch:9200 --  /docker-entrypoint.sh
+    restart: always
+    depends_on:
+      - mongo
+      - elasticsearch
+    ports:
+      # Graylog web interface and REST API
+      - 9000:9000
+      # Syslog TCP
+      - 1514:1514
+      # Syslog UDP
+      - 1514:1514/udp
+      # GELF TCP
+      - 12201:12201
+      # GELF UDP
+      - 12201:12201/udp
+    volumes:
+      - graylog_data:/usr/share/graylog/data
+      - ./plugin:/usr/share/graylog/plugin
+      - ./config/graylog.conf:/usr/share/graylog/data/config/graylog.conf:ro
+
    prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
